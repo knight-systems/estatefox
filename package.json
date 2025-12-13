@@ -1,0 +1,21 @@
+{
+  "name": "estatefox",
+  "private": true,
+  "description": "A full-stack real estate application for South Florida property listings, search, and management.",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+    "dev:backend": "cd backend && uvicorn src.estatefox_api.main:app --reload --port 8000",
+    "dev:frontend": "cd frontend && npm start",
+    "test": "npm run test:backend && npm run test:frontend",
+    "test:backend": "cd backend && pytest tests/ -v",
+    "test:frontend": "cd frontend && npm test",
+    "generate:api": "cd backend && python scripts/export-openapi.py && cp openapi.json ../frontend/ && cd ../frontend && npm run generate:api",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cd backend && ruff check . && mypy src/",
+    "lint:frontend": "cd frontend && npm run lint --if-present",
+    "typecheck": "cd frontend && npx tsc --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^8.0.0"
+  }
+}

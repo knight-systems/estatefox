@@ -1,0 +1,52 @@
+name: EAS Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build app
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Expo
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build preview for PR
+        if: github.event_name == 'pull_request'
+        run: |
+          eas build --platform all --non-interactive --profile preview
+
+      - name: Build production for main
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          eas build --platform all --non-interactive --profile production
+
+      - name: Comment build URL on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '🎉 Preview build started! Check status at https://expo.dev/accounts/toolkmit/projects/estatefox/builds'
+            })
