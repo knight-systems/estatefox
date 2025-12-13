@@ -1,5 +1,8 @@
 # Estatefox
 
+[![CI](https://github.com/knight-systems/estatefox/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/knight-systems/estatefox/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/knight-systems/estatefox/branch/main/graph/badge.svg)](https://codecov.io/gh/knight-systems/estatefox)
+
 A full-stack real estate application for South Florida property listings, search, and management.
 
 ## Project Structure
