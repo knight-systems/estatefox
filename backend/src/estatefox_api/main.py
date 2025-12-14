@@ -1,7 +1,7 @@
 """FastAPI application entrypoint with Lambda handler."""
 
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(
     title="Estatefox API",
-    description="A full-stack real estate application for South Florida property listings, search, and management.",
+    description="Real estate app for South Florida property listings, search, and management.",
     version="0.1.0",
     lifespan=lifespan,
 )
