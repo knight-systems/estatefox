@@ -9,7 +9,7 @@ These tests demonstrate patterns for testing CRUD endpoints:
 import pytest
 from fastapi.testclient import TestClient
 
-from estatefox_api.routes.items import _reset_store
+from src.estatefox_api.routes.items import _reset_store
 
 
 @pytest.fixture(autouse=True)

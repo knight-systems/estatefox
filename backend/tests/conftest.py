@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from estatefox_api.main import app
+from src.estatefox_api.main import app
 
 
 @pytest.fixture
