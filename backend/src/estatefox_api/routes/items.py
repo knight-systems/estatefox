@@ -10,7 +10,8 @@ Replace the in-memory store with your database of choice.
 See docs/ARCHITECTURE.md for database integration guidance.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from typing import TypedDict
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, status
@@ -19,14 +20,25 @@ from ..schemas import ItemCreate, ItemListResponse, ItemResponse, ItemUpdate
 
 router = APIRouter(prefix="/items", tags=["items"])
 
+
+class ItemData(TypedDict):
+    """Type definition for item storage."""
+
+    id: UUID
+    name: str
+    description: str | None
+    created_at: datetime
+    updated_at: datetime
+
+
 # In-memory store - replace with database in production
 # This is a placeholder to demonstrate the API patterns
-_items: dict[UUID, dict] = {}
+_items: dict[UUID, ItemData] = {}
 
 
 def _now() -> datetime:
     """Get current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @router.post(
@@ -46,7 +58,7 @@ async def create_item(item: ItemCreate) -> ItemResponse:
     """
     item_id = uuid4()
     now = _now()
-    item_data = {
+    item_data: ItemData = {
         "id": item_id,
         "name": item.name,
         "description": item.description,
@@ -115,8 +127,10 @@ async def update_item(item_id: UUID, item: ItemUpdate) -> ItemResponse:
 
     # Apply partial updates
     update_data = item.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        item_data[field] = value
+    if "name" in update_data:
+        item_data["name"] = update_data["name"]
+    if "description" in update_data:
+        item_data["description"] = update_data["description"]
     item_data["updated_at"] = _now()
 
     return ItemResponse(**item_data)
