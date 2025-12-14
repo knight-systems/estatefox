@@ -54,7 +54,7 @@ describe('useItems', () => {
   it('handles error response', async () => {
     // Override handler to return error
     server.use(
-      http.get('{{ cookiecutter.api_base_url }}/items', () => {
+      http.get('https://api.estatefox.example.com/items', () => {
         return HttpResponse.json(
           { detail: 'Internal server error' },
           { status: 500 }
