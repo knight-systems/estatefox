@@ -47,12 +47,18 @@ class ApiClient {
         headers,
       });
 
-      const data = await response.json();
+      // Handle responses with no content (204)
+      let data = null;
+      const contentType = response.headers.get('content-type');
+
+      if (response.status !== 204 && contentType && contentType.includes('application/json')) {
+        data = await response.json();
+      }
 
       if (!response.ok) {
         return {
           data: data as T,
-          error: data.message || 'Request failed',
+          error: data?.message || 'Request failed',
           status: response.status,
         };
       }
