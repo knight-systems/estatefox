@@ -9,7 +9,7 @@
  */
 
 import { renderHook, waitFor } from '../utils/test-utils';
-import { useItems, useItem, useCreateItem, useDeleteItem } from '../../hooks/queries/useItems';
+import { useItems, useItem, useCreateItem, useUpdateItem, useDeleteItem } from '../../hooks/queries/useItems';
 import { db } from '../mocks/db';
 import { createMockItem, resetItemCounter } from '../factories/items';
 import { server } from '../mocks/server';
@@ -127,6 +127,100 @@ describe('useCreateItem', () => {
     // Verify item was added to mock database
     expect(db.items.count()).toBe(1);
     expect(db.items.getAll()[0].name).toBe('Database Item');
+  });
+});
+
+describe('useUpdateItem', () => {
+  it('updates item and returns updated data', async () => {
+    const item = createMockItem({ name: 'Original Name', description: 'Original Description' });
+    db.items.create(item);
+
+    const { result } = renderHook(() => useUpdateItem());
+
+    result.current.mutate({
+      id: item.id,
+      data: { name: 'Updated Name' },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    expect(result.current.data?.name).toBe('Updated Name');
+    expect(result.current.data?.description).toBe('Original Description');
+  });
+
+  it('supports partial updates', async () => {
+    const item = createMockItem({ name: 'Name', description: 'Description' });
+    db.items.create(item);
+
+    const { result } = renderHook(() => useUpdateItem());
+
+    // Update only description
+    result.current.mutate({
+      id: item.id,
+      data: { description: 'New Description' },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const updatedItem = db.items.find(item.id);
+    expect(updatedItem?.name).toBe('Name');
+    expect(updatedItem?.description).toBe('New Description');
+  });
+
+  it('updates item in database', async () => {
+    const item = createMockItem({ name: 'To Update' });
+    db.items.create(item);
+
+    const { result } = renderHook(() => useUpdateItem());
+
+    result.current.mutate({
+      id: item.id,
+      data: { name: 'Updated in DB' },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    // Verify database was updated
+    const updatedItem = db.items.find(item.id);
+    expect(updatedItem?.name).toBe('Updated in DB');
+  });
+
+  it('handles not found error', async () => {
+    const { result } = renderHook(() => useUpdateItem());
+
+    result.current.mutate({
+      id: 'non-existent-id',
+      data: { name: 'Updated' },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isError).toBe(true);
+    });
+  });
+
+  it('can set description to null', async () => {
+    const item = createMockItem({ name: 'Item', description: 'Has description' });
+    db.items.create(item);
+
+    const { result } = renderHook(() => useUpdateItem());
+
+    result.current.mutate({
+      id: item.id,
+      data: { description: null },
+    });
+
+    await waitFor(() => {
+      expect(result.current.isSuccess).toBe(true);
+    });
+
+    const updatedItem = db.items.find(item.id);
+    expect(updatedItem?.description).toBeNull();
   });
 });
 
