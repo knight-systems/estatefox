@@ -10,7 +10,7 @@ Replace the in-memory store with your database of choice.
 See docs/ARCHITECTURE.md for database integration guidance.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, TypedDict, cast
 from uuid import UUID, uuid4
 
@@ -28,6 +28,7 @@ class ItemDict(TypedDict):
     created_at: datetime
     updated_at: datetime
 
+
 router = APIRouter(prefix="/items", tags=["items"])
 
 # In-memory store - replace with database in production
@@ -37,7 +38,7 @@ _items: dict[UUID, ItemDict] = {}
 
 def _now() -> datetime:
     """Get current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @router.post(
@@ -124,12 +125,11 @@ async def update_item(item_id: UUID, item: ItemUpdate) -> ItemResponse:
             detail=f"Item {item_id} not found",
         )
 
-    # Apply partial updates - cast to dict for dynamic updates
-    item_dict = cast(dict[str, Any], item_data)
+    # Apply partial updates - need to work with the mutable dict
     update_data = item.model_dump(exclude_unset=True)
     for field, value in update_data.items():
-        item_dict[field] = value
-    item_dict["updated_at"] = _now()
+        item_data[field] = cast(Any, value)  # type: ignore[literal-required]
+    item_data["updated_at"] = _now()
 
     return ItemResponse(**item_data)
 
