@@ -1,0 +1,57 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: mixed-line-ending
+
+  # Backend (Python) - ruff linting and formatting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+        name: ruff linter (backend)
+        files: ^backend/
+      - id: ruff-format
+        name: ruff formatter (backend)
+        files: ^backend/
+
+  - repo: local
+    hooks:
+      # Backend type checking
+      - id: mypy
+        name: mypy type checker (backend)
+        entry: bash -c 'cd backend && uv run mypy src/'
+        language: system
+        pass_filenames: false
+        types: [python]
+        files: ^backend/
+
+      # Frontend linting
+      - id: eslint
+        name: eslint (frontend)
+        entry: bash -c 'cd frontend && npx eslint --fix "$@"' --
+        language: system
+        types: [file]
+        files: ^frontend/.*\.(ts|tsx|js|jsx)$
+
+      # Frontend formatting
+      - id: prettier
+        name: prettier (frontend)
+        entry: bash -c 'cd frontend && npx prettier --write "$@"' --
+        language: system
+        types: [file]
+        files: ^frontend/.*\.(ts|tsx|js|jsx|json|md)$
+
+      # Frontend type checking
+      - id: typescript
+        name: typescript type check (frontend)
+        entry: bash -c 'cd frontend && npx tsc --noEmit'
+        language: system
+        pass_filenames: false
+        types: [file]
+        files: ^frontend/.*\.(ts|tsx)$

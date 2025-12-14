@@ -18,6 +18,9 @@ npm run generate:api
 npm run lint             # Both
 npm run lint:backend     # ruff + mypy
 npm run lint:frontend    # TypeScript
+
+# Code quality (run before committing)
+pre-commit run --all-files
 ```
 
 ---
@@ -140,6 +143,37 @@ npm run generate:api
 # Check generated types
 cat frontend/src/api/generated/types.ts
 ```
+
+---
+
+## Pre-commit Hooks
+
+This project uses pre-commit hooks to ensure code quality before commits.
+
+### Setup (one-time)
+
+```bash
+pip install pre-commit  # or use pipx
+pre-commit install
+```
+
+### Before Committing
+
+**IMPORTANT:** Always run pre-commit before making commits:
+
+```bash
+pre-commit run --all-files
+```
+
+Pre-commit runs:
+- Trailing whitespace removal
+- End-of-file fixer
+- YAML validation
+- Large file check
+- **Backend:** Ruff linting (auto-fix), Ruff formatting, Mypy type checking
+- **Frontend:** ESLint (auto-fix), Prettier formatting, TypeScript type checking
+
+If pre-commit fails, fix the issues and try again. Most issues are auto-fixed.
 
 ---
 
