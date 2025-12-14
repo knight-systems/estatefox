@@ -53,8 +53,21 @@ export const handlers = [
     return HttpResponse.json(newItem, { status: 201 });
   }),
 
-  // Update item
+  // Update item (PATCH)
   http.patch(`${API_BASE}/items/:id`, async ({ params, request }) => {
+    const body = (await request.json()) as ItemUpdate;
+    const updated = db.items.update(params.id as string, body);
+    if (!updated) {
+      return HttpResponse.json(
+        { detail: `Item ${params.id} not found` },
+        { status: 404 }
+      );
+    }
+    return HttpResponse.json(updated);
+  }),
+
+  // Update item (PUT)
+  http.put(`${API_BASE}/items/:id`, async ({ params, request }) => {
     const body = (await request.json()) as ItemUpdate;
     const updated = db.items.update(params.id as string, body);
     if (!updated) {
