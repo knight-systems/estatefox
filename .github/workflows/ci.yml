@@ -34,7 +34,7 @@ jobs:
         run: mypy src/
 
       - name: Run tests
-        run: pytest tests/ -v --cov=src/estatefox_api
+        run: pytest tests/ -v
 
       - name: Export OpenAPI spec
         run: python scripts/export-openapi.py
