@@ -19,9 +19,7 @@ class ItemCreate(BaseApiModel):
     """
 
     name: str = Field(..., min_length=1, max_length=100, description="Item name")
-    description: str | None = Field(
-        None, max_length=500, description="Optional item description"
-    )
+    description: str | None = Field(None, max_length=500, description="Optional item description")
 
 
 class ItemUpdate(BaseApiModel):
