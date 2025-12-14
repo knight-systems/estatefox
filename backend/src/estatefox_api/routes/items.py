@@ -10,7 +10,7 @@ Replace the in-memory store with your database of choice.
 See docs/ARCHITECTURE.md for database integration guidance.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, HTTPException, status
@@ -26,7 +26,7 @@ _items: dict[UUID, dict] = {}
 
 def _now() -> datetime:
     """Get current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @router.post(
