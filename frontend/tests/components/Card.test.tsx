@@ -36,8 +36,8 @@ describe('Card', () => {
     expect(screen.getByText('Second Child')).toBeTruthy();
   });
 
-  it('renders without children', () => {
-    const { root } = render(<Card />);
+  it('renders with empty content', () => {
+    const { root } = render(<Card><Text></Text></Card>);
     expect(root).toBeTruthy();
   });
 

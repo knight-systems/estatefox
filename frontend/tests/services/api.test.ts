@@ -161,7 +161,7 @@ describe('ApiClient', () => {
 
   describe('POST requests', () => {
     it('performs successful POST request with body', async () => {
-      let capturedBody: unknown;
+      let capturedBody: any;
 
       server.use(
         http.post(`${API_BASE_URL}/items`, async ({ request }) => {
@@ -215,7 +215,7 @@ describe('ApiClient', () => {
 
   describe('PUT requests', () => {
     it('performs successful PUT request with body', async () => {
-      let capturedBody: unknown;
+      let capturedBody: any;
 
       server.use(
         http.put(`${API_BASE_URL}/items/1`, async ({ request }) => {
