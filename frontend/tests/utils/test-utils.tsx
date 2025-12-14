@@ -14,7 +14,7 @@
  */
 
 import React, { ReactElement, ReactNode } from 'react';
-import { render, RenderOptions, waitFor } from '@testing-library/react-native';
+import { render, RenderOptions, waitFor, renderHook as rtlRenderHook, RenderHookOptions } from '@testing-library/react-native';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 /**
@@ -86,11 +86,28 @@ export function getTestQueryClient(): QueryClient {
   return testQueryClient;
 }
 
+/**
+ * Custom renderHook that wraps hook in providers.
+ *
+ * @param callback - Hook callback function
+ * @param options - Render hook options
+ * @returns Render hook result with all queries
+ */
+function customRenderHook<Result, Props>(
+  callback: (props: Props) => Result,
+  options?: Omit<RenderHookOptions<Props>, 'wrapper'>
+) {
+  return rtlRenderHook(callback, { wrapper: AllTheProviders, ...options });
+}
+
 // Re-export everything from RTL
 export * from '@testing-library/react-native';
 
 // Override render with custom render
 export { customRender as render };
+
+// Override renderHook with custom renderHook
+export { customRenderHook as renderHook };
 
 // Export waitFor for async assertions
 export { waitFor };

@@ -47,6 +47,14 @@ class ApiClient {
         headers,
       });
 
+      // Handle 204 No Content responses (common for DELETE)
+      if (response.status === 204) {
+        return {
+          data: null as T,
+          status: response.status,
+        };
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
