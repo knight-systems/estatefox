@@ -13,7 +13,7 @@ pytest tests/ --cov=src/estatefox_api
 # Code quality
 ruff check .
 ruff format .
-mypy src/
+mypy
 
 # Generate OpenAPI spec (for frontend type generation)
 python scripts/export-openapi.py
