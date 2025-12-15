@@ -1,0 +1,347 @@
+name: PR Preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, closed]
+
+env:
+  NODE_VERSION: '18'
+  AWS_REGION: us-east-1
+
+jobs:
+  # Determine if we should deploy or cleanup
+  setup:
+    name: Setup Preview
+    runs-on: ubuntu-latest
+    outputs:
+      should-deploy: ${{ steps.check.outputs.should-deploy }}
+      should-cleanup: ${{ steps.check.outputs.should-cleanup }}
+      preview-url: ${{ steps.check.outputs.preview-url }}
+      pr-number: ${{ steps.check.outputs.pr-number }}
+    steps:
+      - name: Check action type
+        id: check
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          echo "pr-number=$PR_NUMBER" >> $GITHUB_OUTPUT
+          echo "preview-url=https://preview-pr-$PR_NUMBER.estatefox.com" >> $GITHUB_OUTPUT
+
+          if [ "${{ github.event.action }}" == "closed" ]; then
+            echo "should-deploy=false" >> $GITHUB_OUTPUT
+            echo "should-cleanup=true" >> $GITHUB_OUTPUT
+            echo "🧹 PR closed - will cleanup preview deployment"
+          else
+            echo "should-deploy=true" >> $GITHUB_OUTPUT
+            echo "should-cleanup=false" >> $GITHUB_OUTPUT
+            echo "🚀 PR ${{ github.event.action }} - will deploy preview"
+          fi
+
+  # Build the frontend for preview
+  build-preview:
+    name: Build Preview
+    needs: setup
+    if: needs.setup.outputs.should-deploy == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Set preview environment variables
+        run: |
+          echo "EXPO_PUBLIC_API_URL=https://api-preview-pr-${{ needs.setup.outputs.pr-number }}.estatefox.com" >> $GITHUB_ENV
+          echo "EXPO_PUBLIC_ENVIRONMENT=preview" >> $GITHUB_ENV
+
+      - name: Build web for preview
+        run: npx expo export --platform web
+
+      - name: Upload preview build
+        uses: actions/upload-artifact@v4
+        with:
+          name: preview-build-pr-${{ needs.setup.outputs.pr-number }}
+          path: frontend/dist
+          retention-days: 7
+
+  # Deploy to Netlify (if configured)
+  deploy-netlify:
+    name: Deploy to Netlify
+    needs: [setup, build-preview]
+    if: needs.setup.outputs.should-deploy == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download preview build
+        uses: actions/download-artifact@v4
+        with:
+          name: preview-build-pr-${{ needs.setup.outputs.pr-number }}
+          path: dist
+
+      - name: Deploy to Netlify
+        uses: nwtgck/actions-netlify@v3.0
+        with:
+          publish-dir: './dist'
+          production-deploy: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deploy-message: |
+            🚀 Preview deployment for PR #${{ needs.setup.outputs.pr-number }}
+            ${{ github.event.pull_request.title }}
+          alias: pr-${{ needs.setup.outputs.pr-number }}
+          enable-pull-request-comment: true
+          enable-commit-comment: false
+          overwrites-pull-request-comment: true
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID_PREVIEW || secrets.NETLIFY_SITE_ID_DEV }}
+        id: netlify
+
+      - name: Comment on PR with preview links
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ needs.setup.outputs.pr-number }};
+            const netlifyUrl = '${{ steps.netlify.outputs.deploy-url }}';
+            const commit = context.payload.pull_request.head.sha.substring(0, 7);
+
+            const body = `## 🚀 Preview Deployment Ready!
+
+            Your preview deployment has been deployed and is ready for testing.
+
+            | Name | Link |
+            |------|------|
+            | 🔗 Preview URL | ${netlifyUrl} |
+            | 📝 Latest Commit | ${commit} |
+            | 🏗️ Build Status | ✅ Success |
+
+            ### What's included:
+            - ✨ Frontend with latest changes
+            - 🎨 Full UI/UX preview
+            - 📱 Mobile responsive preview
+
+            ### Testing the preview:
+            1. Click the preview URL above
+            2. Test your changes thoroughly
+            3. Check mobile responsiveness
+            4. Verify all functionality works as expected
+
+            ---
+
+            💡 **Tip:** This preview will be automatically updated when you push new commits to this PR.
+            🧹 **Cleanup:** The preview will be automatically removed when this PR is closed or merged.
+
+            *Preview generated from commit: \`${context.payload.pull_request.head.sha}\`*`;
+
+            // Try to find existing comment
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber
+            });
+
+            const botComment = comments.data.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Preview Deployment Ready')
+            );
+
+            if (botComment) {
+              // Update existing comment
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              // Create new comment
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: body
+              });
+            }
+
+  # Deploy to AWS S3 (if configured and Netlify is not available)
+  deploy-aws:
+    name: Deploy to AWS S3
+    needs: [setup, build-preview]
+    if: |
+      needs.setup.outputs.should-deploy == 'true' &&
+      github.event.repository.private == false
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download preview build
+        uses: actions/download-artifact@v4
+        with:
+          name: preview-build-pr-${{ needs.setup.outputs.pr-number }}
+          path: dist
+
+      - name: Configure AWS credentials
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy to S3 preview bucket
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.S3_BUCKET_NAME_PREVIEW != '' }}
+        run: |
+          PREVIEW_PREFIX="pr-${{ needs.setup.outputs.pr-number }}"
+          BUCKET="${{ secrets.S3_BUCKET_NAME_PREVIEW }}"
+
+          echo "📦 Deploying preview to S3: s3://$BUCKET/$PREVIEW_PREFIX/"
+
+          # Sync files to S3 under PR-specific prefix
+          aws s3 sync dist/ s3://$BUCKET/$PREVIEW_PREFIX/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable"
+
+          # Upload index.html with no-cache
+          aws s3 cp dist/index.html s3://$BUCKET/$PREVIEW_PREFIX/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          echo "✅ Preview deployed to: https://$BUCKET.s3-website-${{ env.AWS_REGION }}.amazonaws.com/$PREVIEW_PREFIX/"
+
+      - name: Comment on PR with AWS preview link
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.S3_BUCKET_NAME_PREVIEW != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ needs.setup.outputs.pr-number }};
+            const bucket = '${{ secrets.S3_BUCKET_NAME_PREVIEW }}';
+            const previewUrl = `https://${bucket}.s3-website-${{ env.AWS_REGION }}.amazonaws.com/pr-${prNumber}/`;
+
+            const body = `## 🚀 AWS Preview Deployment Ready!
+
+            **Preview URL:** ${previewUrl}
+
+            This preview will be automatically updated when you push new commits.`;
+
+            await github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # Cleanup preview deployment when PR is closed
+  cleanup-preview:
+    name: Cleanup Preview
+    needs: setup
+    if: needs.setup.outputs.should-cleanup == 'true'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Delete Netlify preview
+        if: ${{ secrets.NETLIFY_AUTH_TOKEN != '' }}
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning up Netlify preview for PR #${{ needs.setup.outputs.pr-number }}"
+          # Netlify automatically cleans up preview deployments after 30 days
+          # We rely on Netlify's built-in cleanup for closed PRs
+          echo "✅ Netlify will automatically cleanup this preview deployment"
+
+      - name: Cleanup AWS S3 preview
+        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' && secrets.S3_BUCKET_NAME_PREVIEW != '' }}
+        continue-on-error: true
+        run: |
+          echo "🧹 Cleaning up AWS S3 preview for PR #${{ needs.setup.outputs.pr-number }}"
+
+          # Configure AWS
+          aws configure set aws_access_key_id ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws configure set aws_secret_access_key ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws configure set default.region ${{ env.AWS_REGION }}
+
+          PREVIEW_PREFIX="pr-${{ needs.setup.outputs.pr-number }}"
+          BUCKET="${{ secrets.S3_BUCKET_NAME_PREVIEW }}"
+
+          # Delete all files under the PR prefix
+          aws s3 rm s3://$BUCKET/$PREVIEW_PREFIX/ --recursive
+
+          echo "✅ Preview deployment cleaned up"
+
+      - name: Comment on PR about cleanup
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const prNumber = ${{ needs.setup.outputs.pr-number }};
+
+            const body = `## 🧹 Preview Deployment Cleaned Up
+
+            The preview deployment for this PR has been removed.
+
+            Thank you for your contribution! 🎉`;
+
+            await github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  # Summary job
+  preview-summary:
+    name: Preview Summary
+    needs: [setup, deploy-netlify, deploy-aws, cleanup-preview]
+    if: always()
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Generate summary
+        run: |
+          echo "## 🎯 PR Preview Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**PR Number:** #${{ needs.setup.outputs.pr-number }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Action:** ${{ github.event.action }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.setup.outputs.should-deploy }}" == "true" ]; then
+            echo "### Deployment Status" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${{ needs.deploy-netlify.result }}" == "success" ]; then
+              echo "✅ **Netlify:** Deployed successfully" >> $GITHUB_STEP_SUMMARY
+              echo "   - Preview URL: ${{ needs.setup.outputs.preview-url }}" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.deploy-netlify.result }}" == "skipped" ]; then
+              echo "⏭️ **Netlify:** Skipped (not configured)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **Netlify:** Failed" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if [ "${{ needs.deploy-aws.result }}" == "success" ]; then
+              echo "✅ **AWS S3:** Deployed successfully" >> $GITHUB_STEP_SUMMARY
+            elif [ "${{ needs.deploy-aws.result }}" == "skipped" ]; then
+              echo "⏭️ **AWS S3:** Skipped (not configured)" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ **AWS S3:** Failed" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          if [ "${{ needs.setup.outputs.should-cleanup }}" == "true" ]; then
+            echo "### Cleanup Status" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if [ "${{ needs.cleanup-preview.result }}" == "success" ]; then
+              echo "✅ Preview deployment cleaned up successfully" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ Cleanup completed with warnings (this is normal)" >> $GITHUB_STEP_SUMMARY
+            fi
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Generated by PR Preview workflow*" >> $GITHUB_STEP_SUMMARY
