@@ -28,7 +28,7 @@
       "package": "com.knightsystems.estatefox"
     },
     "web": {
-      "favicon": "./assets/favicon.ico",
+      "favicon": "./assets/fox-icon.png",
       "bundler": "metro",
       "output": "static",
       "name": "EstateFox",
