@@ -485,11 +485,560 @@ View summaries in the Actions tab → Deploy workflow → Summary
 - ECR: Pay per GB stored
 - **Estimate**: ~$0-5/month for low traffic
 
+## Domain Configuration (GoDaddy to Hosting Platform)
+
+This section provides step-by-step instructions for connecting your estatefox.com domain from GoDaddy to your chosen hosting platform.
+
+### Prerequisites
+
+1. Access to your GoDaddy account with domain management permissions
+2. The domain estatefox.com registered in GoDaddy
+3. Your hosting platform configured and deployed (AWS, Netlify, or GitHub Pages)
+
+### Option 1: Connect GoDaddy to AWS (CloudFront + S3)
+
+This is the recommended option for full control and best performance with CloudFront CDN.
+
+#### Step 1: Create SSL Certificate in AWS Certificate Manager (ACM)
+
+1. **Open AWS Certificate Manager** in the AWS Console
+   - **IMPORTANT**: Switch to **us-east-1 (N. Virginia)** region (required for CloudFront)
+
+2. **Request a certificate**:
+   ```
+   - Click "Request a certificate"
+   - Choose "Request a public certificate"
+   - Domain names:
+     * estatefox.com
+     * *.estatefox.com (for subdomains like www, api, dev)
+   - Validation method: DNS validation (recommended)
+   - Click "Request"
+   ```
+
+3. **Note the CNAME records** ACM provides for validation
+   - You'll see records like:
+     ```
+     Name: _abc123.estatefox.com
+     Value: _xyz456.acm-validations.aws.
+     ```
+
+#### Step 2: Add DNS Validation Records in GoDaddy
+
+1. **Log in to GoDaddy**:
+   - Go to https://dcc.godaddy.com/domains
+   - Click on your domain **estatefox.com**
+
+2. **Access DNS Management**:
+   - Click "DNS" or "Manage DNS"
+   - Scroll to the "Records" section
+
+3. **Add ACM validation records**:
+   ```
+   For each CNAME record from ACM:
+   - Type: CNAME
+   - Name: _abc123 (remove .estatefox.com from ACM's name)
+   - Value: _xyz456.acm-validations.aws. (exactly as shown in ACM)
+   - TTL: 1 Hour (default)
+   - Click "Add Record" or "Save"
+   ```
+
+4. **Wait for validation** (usually 5-30 minutes):
+   - Return to ACM console
+   - Certificate status should change to "Issued"
+   - Refresh the page to check
+
+#### Step 3: Configure CloudFront Distribution for Custom Domain
+
+1. **Open CloudFront** in AWS Console:
+   - Find your distribution (created during setup)
+   - Click the Distribution ID
+
+2. **Edit Settings**:
+   - Click "General" tab → "Edit"
+   - **Alternate domain names (CNAMEs)**:
+     ```
+     estatefox.com
+     www.estatefox.com
+     ```
+   - **Custom SSL certificate**: Select your certificate from dropdown
+   - **Supported HTTP versions**: HTTP/2, HTTP/3
+   - Click "Save changes"
+
+3. **Note the CloudFront domain name**:
+   - Example: `d123abc456def.cloudfront.net`
+   - You'll need this for GoDaddy DNS
+
+#### Step 4: Configure DNS Records in GoDaddy
+
+1. **Return to GoDaddy DNS Management**:
+   - https://dcc.godaddy.com/domains → estatefox.com → DNS
+
+2. **Update or add the following records**:
+
+   **For Production (estatefox.com)**:
+   ```
+   Type: CNAME
+   Name: www
+   Value: d123abc456def.cloudfront.net (your CloudFront domain)
+   TTL: 1 Hour
+
+   Type: A (Alias/Forward)
+   Name: @ (root domain)
+   Value: Forward to https://www.estatefox.com
+   OR use GoDaddy's domain forwarding:
+   - Go to "Forwarding" section
+   - Click "Add Forwarding"
+   - Forward estatefox.com to https://www.estatefox.com
+   - Forward type: Permanent (301)
+   ```
+
+   **For Development (dev.estatefox.com)**:
+   ```
+   Type: CNAME
+   Name: dev
+   Value: <your-dev-cloudfront-distribution>.cloudfront.net
+   TTL: 1 Hour
+   ```
+
+   **For API (api.estatefox.com)**:
+   ```
+   Type: CNAME
+   Name: api
+   Value: <your-api-gateway-domain>.execute-api.us-east-1.amazonaws.com
+   OR: <your-lambda-function-url>
+   TTL: 1 Hour
+   ```
+
+3. **Remove conflicting records**:
+   - Delete any existing A or CNAME records for @ or www that conflict
+   - Keep only the new records you just added
+
+#### Step 5: Verify the Connection
+
+1. **Wait for DNS propagation** (5 minutes to 48 hours, usually < 1 hour):
+   ```bash
+   # Check DNS propagation
+   nslookup www.estatefox.com
+   nslookup dev.estatefox.com
+
+   # Or use online tools
+   # https://www.whatsmydns.net/#CNAME/www.estatefox.com
+   ```
+
+2. **Test the website**:
+   ```bash
+   # Test HTTPS works
+   curl -I https://www.estatefox.com
+   curl -I https://estatefox.com
+   curl -I https://dev.estatefox.com
+
+   # Should return 200 OK and show CloudFront headers
+   ```
+
+3. **Verify SSL certificate**:
+   - Open https://www.estatefox.com in browser
+   - Click padlock icon → should show valid SSL
+   - Certificate should be issued by Amazon
+
+### Option 2: Connect GoDaddy to Netlify
+
+Netlify provides the easiest setup with automatic SSL certificates.
+
+#### Step 1: Set Up Custom Domain in Netlify
+
+1. **Log in to Netlify**:
+   - Go to https://app.netlify.com
+   - Select your site (production site)
+
+2. **Add custom domain**:
+   ```
+   - Go to "Site settings" → "Domain management"
+   - Click "Add custom domain"
+   - Enter: estatefox.com
+   - Click "Verify" and "Add domain"
+   - Netlify will detect you don't own it yet and guide you
+   ```
+
+3. **Add www subdomain**:
+   ```
+   - Click "Add domain alias"
+   - Enter: www.estatefox.com
+   - Click "Save"
+   ```
+
+4. **Note the Netlify DNS targets**:
+   - Netlify will show you what DNS records to create
+   - Example:
+     ```
+     apex.netlify.app
+     ```
+
+#### Step 2: Configure DNS in GoDaddy
+
+1. **Option A: Use Netlify DNS (Recommended)**:
+
+   **In Netlify**:
+   ```
+   - In "Domain management", click "Set up Netlify DNS"
+   - Netlify will show you nameservers like:
+     * dns1.p01.nsone.net
+     * dns2.p01.nsone.net
+     * dns3.p01.nsone.net
+     * dns4.p01.nsone.net
+   ```
+
+   **In GoDaddy**:
+   ```
+   - Go to https://dcc.godaddy.com/domains
+   - Click estatefox.com
+   - Scroll to "Nameservers" section
+   - Click "Change Nameservers"
+   - Select "I'll use my own nameservers"
+   - Enter the 4 Netlify nameservers
+   - Click "Save"
+   ```
+
+   **Advantages**: Netlify manages all DNS, automatic SSL, easier setup
+
+2. **Option B: Keep GoDaddy DNS (Manual DNS)**:
+
+   **In GoDaddy DNS Management**:
+   ```
+   Add CNAME record:
+   - Type: CNAME
+   - Name: www
+   - Value: <your-site-name>.netlify.app
+   - TTL: 1 Hour
+
+   Add A record (for root domain):
+   - Type: A
+   - Name: @
+   - Value: 75.2.60.5 (Netlify's load balancer IP)
+   - TTL: 1 Hour
+
+   Add subdomain for dev:
+   - Type: CNAME
+   - Name: dev
+   - Value: <your-dev-site-name>.netlify.app
+   - TTL: 1 Hour
+   ```
+
+   **Note**: Check Netlify's current IP addresses at https://docs.netlify.com/domains-https/custom-domains/
+
+#### Step 3: Enable HTTPS in Netlify
+
+1. **Return to Netlify**:
+   - Go to "Domain management" → "HTTPS"
+   - Click "Verify DNS configuration"
+   - Once verified, click "Provision certificate"
+   - Wait 1-5 minutes for SSL certificate
+
+2. **Enable Force HTTPS**:
+   - Toggle "Force HTTPS" to ON
+   - All HTTP traffic will redirect to HTTPS
+
+#### Step 4: Verify the Connection
+
+1. **Wait for DNS propagation** (5-60 minutes):
+   ```bash
+   nslookup www.estatefox.com
+   nslookup estatefox.com
+   ```
+
+2. **Test the site**:
+   - Open https://estatefox.com
+   - Should redirect to https://www.estatefox.com (or vice versa)
+   - SSL certificate should be valid
+   - Check dev environment: https://dev.estatefox.com
+
+### Option 3: Connect GoDaddy to GitHub Pages
+
+GitHub Pages is the simplest option but only supports production (no dev environment or API).
+
+#### Step 1: Configure Custom Domain in GitHub
+
+1. **Go to your repository on GitHub**:
+   - Settings → Pages
+
+2. **Add custom domain**:
+   ```
+   - Under "Custom domain", enter: www.estatefox.com
+   - Click "Save"
+   - GitHub will create a CNAME file in your repo
+   - Wait for DNS check to complete
+   ```
+
+3. **Enable HTTPS**:
+   ```
+   - Check "Enforce HTTPS" (after DNS is configured)
+   ```
+
+#### Step 2: Configure DNS in GoDaddy
+
+1. **Log in to GoDaddy**:
+   - Go to https://dcc.godaddy.com/domains
+   - Click estatefox.com → DNS
+
+2. **Add GitHub Pages DNS records**:
+
+   ```
+   Add CNAME for www:
+   - Type: CNAME
+   - Name: www
+   - Value: <your-github-username>.github.io
+   - TTL: 1 Hour
+
+   Add A records for apex domain:
+   - Type: A
+   - Name: @
+   - Value: 185.199.108.153
+   - TTL: 1 Hour
+
+   Repeat for all 4 GitHub Pages IPs:
+   - 185.199.108.153
+   - 185.199.109.153
+   - 185.199.110.153
+   - 185.199.111.153
+   ```
+
+3. **Add AAAA records for IPv6** (optional but recommended):
+   ```
+   - Type: AAAA
+   - Name: @
+   - Value: 2606:50c0:8000::153
+   - TTL: 1 Hour
+
+   Repeat for all 4 IPv6 addresses:
+   - 2606:50c0:8000::153
+   - 2606:50c0:8001::153
+   - 2606:50c0:8002::153
+   - 2606:50c0:8003::153
+   ```
+
+#### Step 3: Verify DNS Configuration
+
+1. **Wait for DNS propagation** (15-60 minutes):
+   ```bash
+   nslookup www.estatefox.com
+   # Should show <username>.github.io
+
+   nslookup estatefox.com
+   # Should show GitHub's IPs
+   ```
+
+2. **Verify in GitHub**:
+   - Return to Settings → Pages
+   - Should show "DNS check successful"
+   - Enable "Enforce HTTPS"
+
+3. **Test the site**:
+   - Open https://estatefox.com
+   - Open https://www.estatefox.com
+   - Both should work with valid SSL
+
+### API Subdomain Configuration
+
+For all options, configure the API subdomain (api.estatefox.com):
+
+#### For AWS Lambda with Function URLs:
+
+```
+GoDaddy DNS:
+- Type: CNAME
+- Name: api
+- Value: <function-url-id>.lambda-url.us-east-1.on.aws
+- TTL: 1 Hour
+
+Production:
+- Name: api
+- Value: <prod-function-url>
+
+Development:
+- Name: api-dev
+- Value: <dev-function-url>
+```
+
+#### For AWS Lambda with API Gateway:
+
+1. **Create custom domain in API Gateway**:
+   - Go to API Gateway console
+   - Custom domain names → Create
+   - Domain name: api.estatefox.com
+   - Certificate: Select your ACM certificate
+   - Endpoint type: Regional
+   - Create API mappings for your APIs
+
+2. **Add DNS in GoDaddy**:
+   ```
+   - Type: CNAME
+   - Name: api
+   - Value: <api-gateway-custom-domain-target>
+   - TTL: 1 Hour
+   ```
+
+### DNS Propagation and Testing
+
+#### Check DNS Propagation:
+
+```bash
+# Local checks
+dig estatefox.com
+dig www.estatefox.com
+dig dev.estatefox.com
+dig api.estatefox.com
+
+# Or use online tools
+# https://www.whatsmydns.net
+# https://dnschecker.org
+```
+
+#### Test endpoints:
+
+```bash
+# Frontend
+curl -I https://estatefox.com
+curl -I https://www.estatefox.com
+curl -I https://dev.estatefox.com
+
+# Backend
+curl https://api.estatefox.com/health
+curl https://api-dev.estatefox.com/health
+```
+
+#### Expected response headers:
+
+**AWS/CloudFront**:
+```
+HTTP/2 200
+x-amz-cf-id: ... (CloudFront)
+x-cache: Hit from cloudfront
+```
+
+**Netlify**:
+```
+HTTP/2 200
+x-nf-request-id: ... (Netlify)
+server: Netlify
+```
+
+**GitHub Pages**:
+```
+HTTP/2 200
+server: GitHub.com
+```
+
+### Common Issues and Troubleshooting
+
+#### Issue: DNS not propagating
+
+**Solution**:
+- Wait longer (can take up to 48 hours)
+- Try different DNS servers: `nslookup estatefox.com 8.8.8.8`
+- Check for typos in DNS records
+- Flush local DNS cache: `sudo dscacheutil -flushcache` (macOS)
+
+#### Issue: SSL certificate error
+
+**Solution**:
+- Ensure DNS is fully propagated first
+- In AWS: Verify certificate is in us-east-1 region
+- In Netlify: Click "Renew certificate" if needed
+- In GitHub Pages: Uncheck and recheck "Enforce HTTPS"
+
+#### Issue: "Domain already in use" in Netlify
+
+**Solution**:
+- Check if domain is configured in another Netlify site
+- Remove domain from old site first
+- Verify domain ownership through DNS or email
+
+#### Issue: CloudFront shows 403 Forbidden
+
+**Solution**:
+- Check S3 bucket has a public read policy
+- Verify CloudFront origin is configured correctly
+- Check that index.html exists in the S3 bucket
+- Verify CloudFront has permission to access S3
+
+#### Issue: CNAME records not allowed for apex domain in GoDaddy
+
+**Solution**:
+- Use GoDaddy's domain forwarding feature
+- Forward @ (apex) to www subdomain
+- Or use A records as specified above
+
+### Security Best Practices
+
+1. **Always use HTTPS**:
+   - Enable "Force HTTPS" in Netlify
+   - Enable "Enforce HTTPS" in GitHub Pages
+   - Configure HTTPS redirect in CloudFront
+
+2. **Use strong SSL/TLS**:
+   - TLS 1.2 minimum
+   - Modern cipher suites only
+
+3. **Set security headers** (in CloudFront, Netlify, or Lambda@Edge):
+   ```
+   Strict-Transport-Security: max-age=31536000; includeSubDomains
+   X-Content-Type-Options: nosniff
+   X-Frame-Options: DENY
+   X-XSS-Protection: 1; mode=block
+   Content-Security-Policy: default-src 'self'
+   ```
+
+4. **Enable DNSSEC** (in GoDaddy):
+   - Go to DNS Management
+   - Enable DNSSEC if available
+   - Adds cryptographic signatures to DNS records
+
+### Domain Configuration Checklist
+
+Use this checklist to ensure everything is configured correctly:
+
+#### Pre-deployment:
+- [ ] Domain registered and accessible in GoDaddy
+- [ ] Hosting platform deployed and tested
+- [ ] SSL certificate created (if using AWS)
+
+#### DNS Configuration:
+- [ ] Primary domain (estatefox.com) configured
+- [ ] WWW subdomain (www.estatefox.com) configured
+- [ ] Dev environment (dev.estatefox.com) configured
+- [ ] API subdomain (api.estatefox.com) configured
+- [ ] API dev subdomain (api-dev.estatefox.com) configured
+
+#### SSL/HTTPS:
+- [ ] SSL certificate issued and active
+- [ ] HTTPS enabled on hosting platform
+- [ ] HTTP to HTTPS redirect working
+- [ ] Certificate valid for all subdomains
+
+#### Testing:
+- [ ] DNS propagation complete (all subdomains)
+- [ ] Website accessible at estatefox.com
+- [ ] Website accessible at www.estatefox.com
+- [ ] Dev site accessible at dev.estatefox.com
+- [ ] API accessible at api.estatefox.com
+- [ ] All URLs serve over HTTPS
+- [ ] No SSL certificate warnings
+
+#### Performance:
+- [ ] CDN serving static assets
+- [ ] Cache headers configured correctly
+- [ ] Assets loading quickly
+- [ ] Images optimized and loading
+
+#### Monitoring:
+- [ ] Set up uptime monitoring (optional)
+- [ ] Configure DNS monitoring (optional)
+- [ ] Enable CloudWatch alarms for API (if using AWS)
+
 ## Next Steps
 
 1. Configure AWS resources (S3, CloudFront, ECR, Lambda)
 2. Add secrets to GitHub repository
 3. Push to `main` to trigger first deployment
 4. Verify deployment
-5. Configure custom domain (optional)
+5. Configure custom domain using the instructions above
 6. Set up monitoring alerts (optional)
