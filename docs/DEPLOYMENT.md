@@ -2,22 +2,36 @@
 
 ## Overview
 
-The EstateFox application uses GitHub Actions for CI/CD with separate workflows for development and production environments. The application consists of:
-- **Frontend**: Expo web app deployed to AWS S3 + CloudFront
+The EstateFox application uses GitHub Actions for CI/CD with separate workflows for development, production, and PR preview environments. The application supports multiple deployment platforms:
+
+- **Frontend**: Expo web app
+  - AWS S3 + CloudFront
+  - Netlify (with automatic PR previews)
+  - GitHub Pages
 - **Backend**: FastAPI deployed to AWS Lambda via Docker/ECR
 
 ## Environments
 
 ### Production
 - **Branch**: `main`
-- **Frontend URL**: Configured via `CLOUDFRONT_DOMAIN` variable
-- **Backend**: AWS Lambda function
+- **Frontend URL**: `https://estatefox.com`
+- **Backend URL**: `https://api.estatefox.com`
 - **Trigger**: Push to `main` branch or manual workflow dispatch
+- **Purpose**: Live production environment
 
-### Development/PR Preview
+### Development
+- **Branch**: `dev`
+- **Frontend URL**: `https://dev.estatefox.com`
+- **Backend URL**: `https://api-dev.estatefox.com`
+- **Trigger**: Push to `dev` branch or manual workflow dispatch
+- **Purpose**: Development testing and validation
+
+### PR Preview
 - **Branch**: Feature branches
-- **Purpose**: Build validation and preview
-- **Trigger**: Pull requests to `main`
+- **Frontend URL**: `https://preview-pr-{number}.estatefox.com` (or Netlify preview URL)
+- **Backend URL**: `https://api-preview-pr-{number}.estatefox.com`
+- **Trigger**: Pull requests to `main` or `dev`
+- **Purpose**: Review changes before merging
 
 ## GitHub Actions Workflows
 
@@ -43,24 +57,55 @@ The EstateFox application uses GitHub Actions for CI/CD with separate workflows 
 7. Run Jest tests with coverage
 
 ### 2. Deploy Workflow (`.github/workflows/deploy.yml`)
-**Trigger**: Push to `main` branch or manual dispatch
+**Trigger**:
+- Push to `main` branch (production)
+- Push to `dev` branch (development)
+- Pull requests to `main` or `dev` (PR previews)
+- Manual workflow dispatch
 
 **Features**:
-- Checks for AWS credentials before running
+- Automatically detects deployment environment based on branch/event
+- Checks for deployment platform credentials (AWS/Netlify/GitHub Pages)
 - Detects changes in frontend/backend directories
 - Only deploys changed components
-- Skips gracefully if AWS not configured
+- Supports multiple deployment platforms
+- Creates PR preview environments
 
-**Frontend Deployment**:
+**Environment Detection**:
+- `main` branch → production environment
+- `dev` branch → dev environment
+- Pull requests → preview environment
+- Manual dispatch → choose environment
+
+**Frontend Deployment Options**:
+
+**AWS S3 + CloudFront**:
+1. Build Expo web export with environment-specific API URL
+2. Upload build artifact
+3. Sync to S3 bucket (prod or dev)
+4. Invalidate CloudFront cache
+5. Uses separate buckets for prod/dev
+
+**Netlify**:
 1. Build Expo web export
-2. Sync to S3 bucket
-3. Invalidate CloudFront cache
+2. Upload build artifact
+3. Deploy to Netlify site (prod or dev)
+4. Automatic PR preview deployment
+5. Comments PR with preview URL
+
+**GitHub Pages**:
+1. Build Expo web export
+2. Upload build artifact
+3. Deploy to GitHub Pages (production only)
+4. Available as fallback if AWS/Netlify not configured
 
 **Backend Deployment**:
-1. Run tests
-2. Build Docker image
-3. Push to ECR
-4. Update Lambda function
+1. Run tests with coverage
+2. Build Docker image (tagged with environment)
+3. Save and upload Docker image artifact
+4. Push to ECR with environment tag
+5. Update Lambda function (separate functions for prod/dev)
+6. Wait for Lambda update to complete
 
 ### 3. Frontend Web Deploy (`.github/workflows/deploy-web.yml`)
 **Trigger**: Push to `main` or pull requests
@@ -77,32 +122,69 @@ The EstateFox application uses GitHub Actions for CI/CD with separate workflows 
 
 ## Required Secrets
 
-### AWS Authentication (Option 1 - Access Keys)
-Configure these in GitHub Settings → Secrets and variables → Actions:
+Choose ONE deployment platform based on your needs. Configure the corresponding secrets in GitHub Settings → Secrets and variables → Actions.
 
-```
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
-```
+### Option 1: AWS Deployment (Full Control)
 
-### AWS Authentication (Option 2 - OIDC/IAM Role) ⭐ Recommended
-More secure, no long-lived credentials:
-
+**AWS Authentication**:
 ```
-AWS_ROLE_ARN - IAM role ARN with trust relationship to GitHub OIDC
+AWS_ACCESS_KEY_ID              # AWS access key
+AWS_SECRET_ACCESS_KEY          # AWS secret key
 ```
 
-### Frontend Deployment Secrets
+**Frontend Secrets** (separate for prod/dev):
 ```
-S3_BUCKET_NAME or S3_BUCKET - S3 bucket for static assets
-CLOUDFRONT_DISTRIBUTION_ID - CloudFront distribution ID
-CLOUDFRONT_DOMAIN - Your CloudFront domain (e.g., d123456.cloudfront.net)
+S3_BUCKET_NAME_PROD            # Production S3 bucket name
+S3_BUCKET_NAME_DEV             # Dev S3 bucket name
+CLOUDFRONT_DISTRIBUTION_ID_PROD # Production CloudFront distribution ID
+CLOUDFRONT_DISTRIBUTION_ID_DEV  # Dev CloudFront distribution ID
 ```
 
-### Backend Deployment Secrets
+**Backend Secrets**:
 ```
-ECR_REGISTRY - ECR registry URL (e.g., 123456789.dkr.ecr.us-east-1.amazonaws.com)
+ECR_REGISTRY                   # ECR registry URL (e.g., 123456789.dkr.ecr.us-east-1.amazonaws.com)
 ```
+
+**Note**: Lambda functions should be named `estatefox-api-production` and `estatefox-api-dev`
+
+### Option 2: Netlify Deployment (Easy Setup)
+
+**Netlify Authentication**:
+```
+NETLIFY_AUTH_TOKEN             # Netlify personal access token
+NETLIFY_SITE_ID_PROD           # Production site ID
+NETLIFY_SITE_ID_DEV            # Dev site ID
+```
+
+**How to get Netlify secrets**:
+1. Go to https://app.netlify.com/user/applications
+2. Create a new personal access token
+3. Create two sites (one for production, one for dev)
+4. Copy the site IDs from Settings > General > Site details
+
+**Benefits**:
+- Automatic PR preview deployments
+- PR comments with preview URLs
+- No infrastructure setup needed
+- Built-in CDN
+
+### Option 3: GitHub Pages (Simple Static Hosting)
+
+**No secrets required!**
+
+1. Go to repository Settings > Pages
+2. Under "Source", select "GitHub Actions"
+3. Push to `main` to deploy
+
+**Note**: GitHub Pages only supports production deployments (no dev or PR previews)
+
+### Combining Platforms
+
+You can use different platforms for different purposes:
+- **Frontend**: Netlify (easy PR previews)
+- **Backend**: AWS Lambda (full control)
+
+The workflow automatically detects which platforms are configured based on available secrets.
 
 ## Variables vs Secrets
 
@@ -114,25 +196,91 @@ Use **Variables** for:
 - Non-sensitive configuration (S3 bucket names, CloudFront IDs)
 - Available in repository settings → Variables
 
-## Manual Deployment
+## Deployment Workflows
 
-### Frontend (Local)
+### Development Workflow
+
+1. **Create feature branch**:
+   ```bash
+   git checkout dev
+   git pull origin dev
+   git checkout -b feature/my-feature
+   ```
+
+2. **Make changes and commit**:
+   ```bash
+   git add .
+   git commit -m "feat: add new feature"
+   git push origin feature/my-feature
+   ```
+
+3. **Open PR to dev branch**:
+   - PR preview automatically created (if Netlify configured)
+   - CI tests run automatically
+   - Review preview deployment
+
+4. **Merge to dev**:
+   - Automatically deploys to dev environment
+   - Test at `https://dev.estatefox.com`
+
+5. **When ready for production**:
+   - Create PR from `dev` to `main`
+   - Review and merge
+   - Automatically deploys to production
+
+### Production Hotfix Workflow
+
+For urgent fixes that can't wait for normal dev cycle:
+
+1. **Create hotfix branch from main**:
+   ```bash
+   git checkout main
+   git pull origin main
+   git checkout -b hotfix/critical-bug
+   ```
+
+2. **Fix and test locally**
+
+3. **Open PR to main**:
+   - PR preview created
+   - Fast-track review
+
+4. **Merge to main**:
+   - Automatically deploys to production
+
+5. **Backport to dev**:
+   ```bash
+   git checkout dev
+   git merge main
+   git push origin dev
+   ```
+
+### Manual Deployment
+
+You can manually trigger deployments from GitHub Actions:
+
+1. Go to **Actions** tab
+2. Select **Deploy** workflow
+3. Click **Run workflow**
+4. Choose environment: `dev` or `production`
+5. Click **Run workflow**
+
+### Local Build (Testing Only)
+
+**Frontend**:
 ```bash
 cd frontend
 npm install
 npm run build:web
-# Upload dist/ to S3
-aws s3 sync dist/ s3://your-bucket-name/ --delete
-aws cloudfront create-invalidation --distribution-id YOUR_ID --paths "/*"
+# Output in dist/ directory
 ```
 
-### Backend (Local)
+**Backend**:
 ```bash
 cd backend
 pip install -e ".[dev]"
 pytest tests/
 docker build -t estatefox-api .
-# Push to ECR and update Lambda
 ```
 
 ## Deployment Verification
@@ -243,12 +391,40 @@ docker build -t estatefox-api .
 
 ## PR Preview Workflow
 
-1. Developer creates PR
+### With Netlify (Recommended)
+
+1. Developer creates PR to `main` or `dev`
 2. CI workflow runs (tests both frontend and backend)
-3. Web deploy workflow builds frontend
-4. Bot comments on PR with build status
-5. Reviewer can verify build succeeded
-6. On merge, deploy workflow automatically deploys to production
+3. Deploy workflow builds frontend and backend
+4. Netlify creates preview deployment
+5. Bot comments on PR with preview URL
+6. Reviewer can:
+   - View live preview
+   - Test functionality
+   - Verify visual changes
+7. Preview updates automatically on new commits
+8. On merge, deploys to target environment (dev or production)
+
+### With AWS (Manual Preview)
+
+1. Developer creates PR
+2. CI workflow runs tests
+3. Build artifacts created
+4. Reviewer checks build status
+5. Manual testing may be required
+6. On merge, deploys to target environment
+
+## Deployment Summary
+
+After each deployment, GitHub Actions creates a summary showing:
+
+- **Environment**: Which environment was deployed to
+- **URL**: The deployment URL
+- **Commit**: The commit SHA that was deployed
+- **Services**: Which services were deployed (frontend/backend)
+- **Status**: Success/failure for each service
+
+View summaries in the Actions tab → Deploy workflow → Summary
 
 ## Rollback Procedure
 
