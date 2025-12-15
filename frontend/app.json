@@ -30,6 +30,7 @@
     "web": {
       "favicon": "./assets/favicon.ico",
       "bundler": "metro",
+      "output": "static",
       "name": "EstateFox",
       "shortName": "EstateFox",
       "description": "South Florida's premier real estate platform for property listings, search, and management.",
