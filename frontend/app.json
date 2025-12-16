@@ -18,7 +18,10 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.knightsystems.estatefox"
+      "bundleIdentifier": "com.knightsystems.estatefox",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
