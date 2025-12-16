@@ -10,7 +10,7 @@ export default function HomeScreen() {
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Welcome to Estatefox</Text>
+        <Text style={styles.title}>Welcome to EstateFox 🦊</Text>
         <Text style={styles.subtitle}>A full-stack real estate application for South Florida property listings, search, and management.</Text>
       </View>
 
