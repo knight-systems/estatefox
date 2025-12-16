@@ -26,11 +26,6 @@
   },
   "submit": {
     "production": {
-      "ios": {
-        "appleId": "Developer@example.com",
-        "ascAppId": "",
-        "appleTeamId": ""
-      },
       "android": {
         "serviceAccountKeyPath": "./android-service-account.json",
         "track": "internal"

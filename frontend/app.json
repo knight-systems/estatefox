@@ -39,14 +39,21 @@
       "lang": "en"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-updates"
     ],
+    "updates": {
+      "url": "https://u.expo.dev/0478d126-5629-4cf6-b815-6cc65a96ecae"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
     "extra": {
       "router": {
         "origin": false
       },
       "eas": {
-        "projectId": ""
+        "projectId": "0478d126-5629-4cf6-b815-6cc65a96ecae"
       }
     },
     "owner": "toolkmit"
