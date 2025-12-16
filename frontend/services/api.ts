@@ -1,4 +1,7 @@
-const API_BASE_URL = 'https://api.estatefox.example.com';
+// API URL is configurable via environment variable for preview deployments
+// In production: https://api.estatefox.com
+// In preview: https://api-dev.estatefox.com (set via EXPO_PUBLIC_API_URL)
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL || 'https://api.estatefox.com';
 
 export interface ApiResponse<T> {
   data: T;

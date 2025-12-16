@@ -62,7 +62,7 @@ jobs:
 
       - name: Set preview environment variables
         run: |
-          echo "EXPO_PUBLIC_API_URL=https://api-preview-pr-${{ needs.setup.outputs.pr-number }}.estatefox.com" >> $GITHUB_ENV
+          echo "EXPO_PUBLIC_API_URL=https://api-dev.estatefox.com" >> $GITHUB_ENV
           echo "EXPO_PUBLIC_ENVIRONMENT=preview" >> $GITHUB_ENV
 
       - name: Build web for preview
