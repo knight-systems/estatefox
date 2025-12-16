@@ -241,7 +241,6 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: ${{ needs.setup.outputs.environment }}-api
-      url: ${{ secrets.API_URL }}
 
     steps:
       - name: Download Docker image
