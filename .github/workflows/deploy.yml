@@ -2,40 +2,120 @@ name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy to'
+        required: true
+        type: choice
+        options:
+          - dev
+          - production
 
 env:
   AWS_REGION: us-east-1
+  NODE_VERSION: '18'
+  PYTHON_VERSION: '3.11'
 
 jobs:
-  check-secrets:
-    name: Check AWS Configuration
+  # Determine deployment environment
+  setup:
+    name: Setup Environment
     runs-on: ubuntu-latest
     outputs:
-      has-aws-config: ${{ steps.check.outputs.has-config }}
+      environment: ${{ steps.env.outputs.environment }}
+      deploy-url: ${{ steps.env.outputs.deploy-url }}
+      is-preview: ${{ steps.env.outputs.is-preview }}
     steps:
-      - name: Check if AWS secrets are configured
+      - name: Determine environment
+        id: env
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "environment=preview" >> $GITHUB_OUTPUT
+            echo "deploy-url=https://preview-pr-${{ github.event.pull_request.number }}.estatefox.com" >> $GITHUB_OUTPUT
+            echo "is-preview=true" >> $GITHUB_OUTPUT
+            echo "📦 PR Preview Deployment"
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+            echo "environment=production" >> $GITHUB_OUTPUT
+            echo "deploy-url=https://estatefox.com" >> $GITHUB_OUTPUT
+            echo "is-preview=false" >> $GITHUB_OUTPUT
+            echo "🚀 Production Deployment"
+          elif [ "${{ github.ref }}" == "refs/heads/dev" ]; then
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "deploy-url=https://dev.estatefox.com" >> $GITHUB_OUTPUT
+            echo "is-preview=false" >> $GITHUB_OUTPUT
+            echo "🔧 Dev Deployment"
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            ENV="${{ github.event.inputs.environment }}"
+            echo "environment=$ENV" >> $GITHUB_OUTPUT
+            if [ "$ENV" == "production" ]; then
+              echo "deploy-url=https://estatefox.com" >> $GITHUB_OUTPUT
+            else
+              echo "deploy-url=https://dev.estatefox.com" >> $GITHUB_OUTPUT
+            fi
+            echo "is-preview=false" >> $GITHUB_OUTPUT
+            echo "🎯 Manual $ENV Deployment"
+          fi
+
+  # Check which deployment method is configured
+  check-deployment-config:
+    name: Check Deployment Configuration
+    runs-on: ubuntu-latest
+    outputs:
+      use-aws: ${{ steps.check.outputs.use-aws }}
+      use-netlify: ${{ steps.check.outputs.use-netlify }}
+      use-github-pages: ${{ steps.check.outputs.use-github-pages }}
+    steps:
+      - name: Check deployment configuration
         id: check
         run: |
+          # Check for AWS credentials
           if [ -n "${{ secrets.AWS_ACCESS_KEY_ID }}" ]; then
-            echo "has-config=true" >> $GITHUB_OUTPUT
-            echo "✅ AWS credentials configured"
+            echo "use-aws=true" >> $GITHUB_OUTPUT
+            echo "✅ AWS deployment configured"
           else
-            echo "has-config=false" >> $GITHUB_OUTPUT
-            echo "⚠️ AWS credentials not configured - skipping deployment"
-            echo "To enable deployments, configure the following secrets:"
-            echo "  - AWS_ACCESS_KEY_ID"
-            echo "  - AWS_SECRET_ACCESS_KEY"
-            echo "  - S3_BUCKET_NAME (for frontend)"
-            echo "  - CLOUDFRONT_DISTRIBUTION_ID (for frontend)"
-            echo "  - ECR_REGISTRY (for backend)"
+            echo "use-aws=false" >> $GITHUB_OUTPUT
+            echo "⚠️ AWS deployment not configured"
           fi
+
+          # Check for Netlify token
+          if [ -n "${{ secrets.NETLIFY_AUTH_TOKEN }}" ]; then
+            echo "use-netlify=true" >> $GITHUB_OUTPUT
+            echo "✅ Netlify deployment configured"
+          else
+            echo "use-netlify=false" >> $GITHUB_OUTPUT
+            echo "⚠️ Netlify deployment not configured"
+          fi
+
+          # GitHub Pages is available by default if enabled in repo settings
+          echo "use-github-pages=true" >> $GITHUB_OUTPUT
+
+          echo ""
+          echo "📝 To enable deployments, configure one of the following:"
+          echo ""
+          echo "AWS Deployment:"
+          echo "  - AWS_ACCESS_KEY_ID"
+          echo "  - AWS_SECRET_ACCESS_KEY"
+          echo "  - S3_BUCKET_NAME_PROD (production bucket)"
+          echo "  - S3_BUCKET_NAME_DEV (dev bucket)"
+          echo "  - CLOUDFRONT_DISTRIBUTION_ID_PROD"
+          echo "  - CLOUDFRONT_DISTRIBUTION_ID_DEV"
+          echo "  - ECR_REGISTRY"
+          echo ""
+          echo "Netlify Deployment:"
+          echo "  - NETLIFY_AUTH_TOKEN"
+          echo "  - NETLIFY_SITE_ID_PROD"
+          echo "  - NETLIFY_SITE_ID_DEV"
+          echo ""
+          echo "GitHub Pages:"
+          echo "  - Enable in repository Settings > Pages"
+          echo "  - Source: GitHub Actions"
 
   changes:
     name: Detect Changes
-    needs: check-secrets
-    if: needs.check-secrets.outputs.has-aws-config == 'true'
     runs-on: ubuntu-latest
     outputs:
       frontend: ${{ steps.filter.outputs.frontend }}
@@ -48,13 +128,16 @@ jobs:
           filters: |
             frontend:
               - 'frontend/**'
+              - '.github/workflows/deploy.yml'
             backend:
               - 'backend/**'
+              - '.github/workflows/deploy.yml'
 
-  deploy-frontend-web:
-    name: Deploy Frontend (Web)
-    needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+  # Build and test frontend
+  build-frontend:
+    name: Build Frontend
+    needs: [setup, changes]
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -66,15 +149,50 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: ${{ env.NODE_VERSION }}
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Set environment variables
+        run: |
+          ENV="${{ needs.setup.outputs.environment }}"
+          if [ "$ENV" == "production" ]; then
+            echo "EXPO_PUBLIC_API_URL=https://api.estatefox.com" >> $GITHUB_ENV
+          elif [ "$ENV" == "dev" ]; then
+            echo "EXPO_PUBLIC_API_URL=https://api-dev.estatefox.com" >> $GITHUB_ENV
+          else
+            echo "EXPO_PUBLIC_API_URL=https://api-preview-pr-${{ github.event.pull_request.number }}.estatefox.com" >> $GITHUB_ENV
+          fi
+
       - name: Build web
         run: npx expo export --platform web
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-build-${{ needs.setup.outputs.environment }}
+          path: frontend/dist
+          retention-days: 7
+
+  # Deploy frontend to AWS S3 + CloudFront
+  deploy-frontend-aws:
+    name: Deploy Frontend (AWS)
+    needs: [setup, check-deployment-config, build-frontend]
+    if: needs.check-deployment-config.outputs.use-aws == 'true' && needs.setup.outputs.is-preview == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+      url: ${{ needs.setup.outputs.deploy-url }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build-${{ needs.setup.outputs.environment }}
+          path: dist
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -85,18 +203,127 @@ jobs:
 
       - name: Deploy to S3
         run: |
-          aws s3 sync dist/ s3://${{ secrets.S3_BUCKET_NAME }}/ --delete
+          if [ "${{ needs.setup.outputs.environment }}" == "production" ]; then
+            BUCKET="${{ secrets.S3_BUCKET_NAME_PROD }}"
+            DISTRIBUTION="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_PROD }}"
+          else
+            BUCKET="${{ secrets.S3_BUCKET_NAME_DEV }}"
+            DISTRIBUTION="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_DEV }}"
+          fi
+
+          echo "📦 Deploying to S3 bucket: $BUCKET"
+          aws s3 sync dist/ s3://$BUCKET/ --delete --cache-control "public, max-age=31536000, immutable"
+
+          # Upload index.html with no-cache to ensure updates are seen immediately
+          aws s3 cp dist/index.html s3://$BUCKET/index.html --cache-control "no-cache, no-store, must-revalidate"
 
       - name: Invalidate CloudFront
         run: |
+          if [ "${{ needs.setup.outputs.environment }}" == "production" ]; then
+            DISTRIBUTION="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_PROD }}"
+          else
+            DISTRIBUTION="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_DEV }}"
+          fi
+
+          echo "🔄 Invalidating CloudFront distribution: $DISTRIBUTION"
           aws cloudfront create-invalidation \
-            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --distribution-id $DISTRIBUTION \
             --paths "/*"
 
-  deploy-backend:
-    name: Deploy Backend
-    needs: changes
-    if: needs.changes.outputs.backend == 'true'
+  # Deploy frontend to Netlify
+  deploy-frontend-netlify:
+    name: Deploy Frontend (Netlify)
+    needs: [setup, check-deployment-config, build-frontend]
+    if: needs.check-deployment-config.outputs.use-netlify == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.setup.outputs.environment }}
+      url: ${{ needs.setup.outputs.deploy-url }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build-${{ needs.setup.outputs.environment }}
+          path: dist
+
+      - name: Deploy to Netlify
+        uses: nwtgck/actions-netlify@v3.0
+        with:
+          publish-dir: './dist'
+          production-branch: main
+          production-deploy: ${{ needs.setup.outputs.environment == 'production' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          deploy-message: |
+            Deploy from GitHub Actions - ${{ needs.setup.outputs.environment }}
+            ${{ github.event.head_commit.message }}
+          alias: ${{ needs.setup.outputs.is-preview == 'true' && format('pr-{0}', github.event.pull_request.number) || needs.setup.outputs.environment }}
+          enable-pull-request-comment: true
+          enable-commit-comment: false
+          overwrites-pull-request-comment: true
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ needs.setup.outputs.environment == 'production' && secrets.NETLIFY_SITE_ID_PROD || secrets.NETLIFY_SITE_ID_DEV }}
+
+      - name: Comment PR with preview URL
+        if: needs.setup.outputs.is-preview == 'true' && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🚀 Preview Deployment
+
+              Your preview deployment is ready!
+
+              **Preview URL:** ${{ needs.setup.outputs.deploy-url }}
+
+              This preview will be automatically updated when you push new commits to this PR.`
+            })
+
+  # Deploy frontend to GitHub Pages
+  deploy-frontend-github-pages:
+    name: Deploy Frontend (GitHub Pages)
+    needs: [setup, check-deployment-config, build-frontend]
+    if: |
+      needs.check-deployment-config.outputs.use-github-pages == 'true' &&
+      needs.check-deployment-config.outputs.use-aws == 'false' &&
+      needs.check-deployment-config.outputs.use-netlify == 'false' &&
+      needs.setup.outputs.environment == 'production'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-build-${{ needs.setup.outputs.environment }}
+          path: dist
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './dist'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  # Build and test backend
+  build-backend:
+    name: Build & Test Backend
+    needs: [setup, changes]
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -108,7 +335,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: ${{ env.PYTHON_VERSION }}
 
       - name: Install dependencies
         run: |
@@ -116,7 +343,45 @@ jobs:
           pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ -v
+        run: pytest tests/ -v --cov=src/estatefox_api
+
+      - name: Build Docker image
+        run: |
+          docker build -t estatefox-api:${{ needs.setup.outputs.environment }} .
+
+      - name: Save Docker image
+        if: needs.setup.outputs.is-preview == 'false'
+        run: |
+          docker save estatefox-api:${{ needs.setup.outputs.environment }} | gzip > /tmp/estatefox-api.tar.gz
+
+      - name: Upload Docker image
+        if: needs.setup.outputs.is-preview == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-image-${{ needs.setup.outputs.environment }}
+          path: /tmp/estatefox-api.tar.gz
+          retention-days: 7
+
+  # Deploy backend to AWS (ECR + Lambda)
+  deploy-backend-aws:
+    name: Deploy Backend (AWS)
+    needs: [setup, check-deployment-config, build-backend]
+    if: needs.check-deployment-config.outputs.use-aws == 'true' && needs.setup.outputs.is-preview == 'false'
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ needs.setup.outputs.environment }}-api
+      url: https://api${{ needs.setup.outputs.environment == 'dev' && '-dev' || '' }}.estatefox.com
+
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-image-${{ needs.setup.outputs.environment }}
+          path: /tmp
+
+      - name: Load Docker image
+        run: |
+          docker load < /tmp/estatefox-api.tar.gz
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -125,17 +390,67 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Build and push Docker image
+      - name: Push to ECR
         run: |
+          ENV="${{ needs.setup.outputs.environment }}"
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             docker login --username AWS --password-stdin ${{ secrets.ECR_REGISTRY }}
-          docker build -t estatefox-api .
-          docker tag estatefox-api:latest \
-            ${{ secrets.ECR_REGISTRY }}/estatefox-api:latest
-          docker push ${{ secrets.ECR_REGISTRY }}/estatefox-api:latest
+
+          docker tag estatefox-api:$ENV \
+            ${{ secrets.ECR_REGISTRY }}/estatefox-api:$ENV
+          docker tag estatefox-api:$ENV \
+            ${{ secrets.ECR_REGISTRY }}/estatefox-api:$ENV-${{ github.sha }}
+
+          docker push ${{ secrets.ECR_REGISTRY }}/estatefox-api:$ENV
+          docker push ${{ secrets.ECR_REGISTRY }}/estatefox-api:$ENV-${{ github.sha }}
 
       - name: Update Lambda function
         run: |
+          ENV="${{ needs.setup.outputs.environment }}"
+          FUNCTION_NAME="estatefox-api-$ENV"
+
+          echo "🚀 Updating Lambda function: $FUNCTION_NAME"
           aws lambda update-function-code \
-            --function-name estatefox-api \
-            --image-uri ${{ secrets.ECR_REGISTRY }}/estatefox-api:latest
+            --function-name $FUNCTION_NAME \
+            --image-uri ${{ secrets.ECR_REGISTRY }}/estatefox-api:$ENV
+
+          # Wait for update to complete
+          aws lambda wait function-updated --function-name $FUNCTION_NAME
+
+          echo "✅ Lambda function updated successfully"
+
+  # Deployment summary
+  deployment-summary:
+    name: Deployment Summary
+    needs: [setup, deploy-frontend-aws, deploy-frontend-netlify, deploy-frontend-github-pages, deploy-backend-aws]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create deployment summary
+        run: |
+          echo "## 🚀 Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**URL:** ${{ needs.setup.outputs.deploy-url }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.deploy-frontend-aws.result }}" == "success" ]; then
+            echo "✅ Frontend deployed to AWS" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.deploy-frontend-netlify.result }}" == "success" ]; then
+            echo "✅ Frontend deployed to Netlify" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.deploy-frontend-github-pages.result }}" == "success" ]; then
+            echo "✅ Frontend deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.deploy-backend-aws.result }}" == "success" ]; then
+            echo "✅ Backend deployed to AWS" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "---" >> $GITHUB_STEP_SUMMARY
+          echo "*Deployed via GitHub Actions*" >> $GITHUB_STEP_SUMMARY

@@ -1,16 +1,17 @@
 {
   "expo": {
-    "name": "Estatefox",
+    "name": "EstateFox",
     "slug": "estatefox",
     "version": "1.0.0",
+    "description": "South Florida's premier real estate platform for property listings, search, and management.",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/fox-icon.png",
     "userInterfaceStyle": "automatic",
     "scheme": "estatefox",
     "splash": {
-      "image": "./assets/splash.png",
+      "image": "./assets/logo-full.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#17425a"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -27,8 +28,15 @@
       "package": "com.knightsystems.estatefox"
     },
     "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro"
+      "favicon": "./assets/fox-icon.png",
+      "bundler": "metro",
+      "output": "static",
+      "name": "EstateFox",
+      "shortName": "EstateFox",
+      "description": "South Florida's premier real estate platform for property listings, search, and management.",
+      "themeColor": "#17425a",
+      "backgroundColor": "#ffffff",
+      "lang": "en"
     },
     "plugins": [
       "expo-router"
