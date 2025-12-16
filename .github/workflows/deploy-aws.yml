@@ -2,9 +2,8 @@ name: Deploy
 
 on:
   push:
-    branches: [main, dev]
-  pull_request:
-    branches: [main, dev]
+    branches: [main]      # → dev (auto)
+    tags: ['v*']          # → production (with approval)
   workflow_dispatch:
     inputs:
       environment:
@@ -17,7 +16,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  NODE_VERSION: '18'
+  NODE_VERSION: '20'
   PYTHON_VERSION: '3.11'
 
 # Required for AWS OIDC authentication
@@ -33,36 +32,37 @@ jobs:
     outputs:
       environment: ${{ steps.env.outputs.environment }}
       deploy-url: ${{ steps.env.outputs.deploy-url }}
-      is-preview: ${{ steps.env.outputs.is-preview }}
+      version: ${{ steps.env.outputs.version }}
+      is-prod: ${{ steps.env.outputs.is-prod }}
     steps:
       - name: Determine environment
         id: env
         run: |
-          if [ "${{ github.event_name }}" == "pull_request" ]; then
-            echo "environment=preview" >> $GITHUB_OUTPUT
-            echo "deploy-url=https://preview-pr-${{ github.event.pull_request.number }}.estatefox.com" >> $GITHUB_OUTPUT
-            echo "is-preview=true" >> $GITHUB_OUTPUT
-            echo "PR Preview Deployment"
-          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            TAG="${{ github.ref_name }}"
             echo "environment=production" >> $GITHUB_OUTPUT
-            echo "deploy-url=https://d1m6idbq3389wk.cloudfront.net" >> $GITHUB_OUTPUT
-            echo "is-preview=false" >> $GITHUB_OUTPUT
-            echo "Production Deployment"
-          elif [ "${{ github.ref }}" == "refs/heads/dev" ]; then
+            echo "deploy-url=https://estatefox.com" >> $GITHUB_OUTPUT
+            echo "version=$TAG" >> $GITHUB_OUTPUT
+            echo "is-prod=true" >> $GITHUB_OUTPUT
+            echo "🚀 Production Deployment: $TAG"
+          elif [ "${{ github.ref }}" == "refs/heads/main" ]; then
             echo "environment=dev" >> $GITHUB_OUTPUT
             echo "deploy-url=https://dev.estatefox.com" >> $GITHUB_OUTPUT
-            echo "is-preview=false" >> $GITHUB_OUTPUT
-            echo "Dev Deployment"
+            echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "is-prod=false" >> $GITHUB_OUTPUT
+            echo "🔧 Dev Deployment"
           elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             ENV="${{ github.event.inputs.environment }}"
             echo "environment=$ENV" >> $GITHUB_OUTPUT
             if [ "$ENV" == "production" ]; then
-              echo "deploy-url=https://d1m6idbq3389wk.cloudfront.net" >> $GITHUB_OUTPUT
+              echo "deploy-url=https://estatefox.com" >> $GITHUB_OUTPUT
+              echo "is-prod=true" >> $GITHUB_OUTPUT
             else
               echo "deploy-url=https://dev.estatefox.com" >> $GITHUB_OUTPUT
+              echo "is-prod=false" >> $GITHUB_OUTPUT
             fi
-            echo "is-preview=false" >> $GITHUB_OUTPUT
-            echo "Manual $ENV Deployment"
+            echo "version=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "🎯 Manual $ENV Deployment"
           fi
 
   # Check which deployment method is configured
@@ -77,22 +77,23 @@ jobs:
         env:
           AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
         run: |
-          # Check for AWS OIDC role (preferred) or access keys
           if [ -n "$AWS_ROLE_ARN" ]; then
             echo "use-aws=true" >> $GITHUB_OUTPUT
-            echo "AWS deployment configured (OIDC)"
+            echo "✅ AWS deployment configured (OIDC)"
           else
             echo "use-aws=false" >> $GITHUB_OUTPUT
-            echo "AWS deployment not configured"
+            echo "⚠️ AWS deployment not configured"
             echo ""
             echo "To enable AWS deployment, configure:"
             echo "  - AWS_ROLE_ARN (OIDC role for GitHub Actions)"
-            echo "  - S3_BUCKET_NAME_PROD"
-            echo "  - CLOUDFRONT_DISTRIBUTION_ID_PROD"
-            echo "  - ECR_REGISTRY"
-            echo "  - ECR_REPOSITORY"
+            echo "  - S3_BUCKET_NAME (per environment)"
+            echo "  - CLOUDFRONT_DISTRIBUTION_ID (per environment)"
+            echo "  - ECR_REGISTRY (repository level)"
+            echo "  - ECR_REPOSITORY (per environment)"
+            echo "  - LAMBDA_FUNCTION_NAME (per environment)"
           fi
 
+  # Detect which components changed
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
@@ -107,16 +108,16 @@ jobs:
           filters: |
             frontend:
               - 'frontend/**'
-              - '.github/workflows/deploy.yml'
+              - '.github/workflows/deploy-aws.yml'
             backend:
               - 'backend/**'
-              - '.github/workflows/deploy.yml'
+              - '.github/workflows/deploy-aws.yml'
 
   # Build and test frontend
   build-frontend:
     name: Build Frontend
     needs: [setup, changes]
-    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.frontend == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -137,8 +138,7 @@ jobs:
 
       - name: Set environment variables
         run: |
-          ENV="${{ needs.setup.outputs.environment }}"
-          # Use the API Gateway URL from Terraform outputs
+          # API_URL is environment-scoped, gets correct value automatically
           echo "EXPO_PUBLIC_API_URL=${{ secrets.API_URL }}" >> $GITHUB_ENV
 
       - name: Build web
@@ -155,7 +155,10 @@ jobs:
   deploy-frontend-aws:
     name: Deploy Frontend (AWS)
     needs: [setup, check-deployment-config, build-frontend]
-    if: needs.check-deployment-config.outputs.use-aws == 'true' && needs.setup.outputs.is-preview == 'false'
+    # Explicit guard: production only runs for version tags
+    if: |
+      needs.check-deployment-config.outputs.use-aws == 'true' &&
+      (needs.setup.outputs.is-prod != 'true' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     environment:
       name: ${{ needs.setup.outputs.environment }}
@@ -176,15 +179,18 @@ jobs:
 
       - name: Deploy to S3
         run: |
-          BUCKET="${{ secrets.S3_BUCKET_NAME_PROD }}"
+          # Secrets are environment-scoped, same name different values
+          BUCKET="${{ secrets.S3_BUCKET_NAME }}"
           echo "Deploying to S3 bucket: $BUCKET"
-          aws s3 sync dist/ s3://$BUCKET/ --delete --cache-control "public, max-age=31536000, immutable"
+          aws s3 sync dist/ s3://$BUCKET/ --delete \
+            --cache-control "public, max-age=31536000, immutable"
           # Upload index.html with no-cache to ensure updates are seen immediately
-          aws s3 cp dist/index.html s3://$BUCKET/index.html --cache-control "no-cache, no-store, must-revalidate"
+          aws s3 cp dist/index.html s3://$BUCKET/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
 
       - name: Invalidate CloudFront
         run: |
-          DISTRIBUTION="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID_PROD }}"
+          DISTRIBUTION="${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }}"
           echo "Invalidating CloudFront distribution: $DISTRIBUTION"
           aws cloudfront create-invalidation \
             --distribution-id $DISTRIBUTION \
@@ -194,7 +200,7 @@ jobs:
   build-backend:
     name: Build & Test Backend
     needs: [setup, changes]
-    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.backend == 'true' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -218,15 +224,13 @@ jobs:
 
       - name: Build Docker image
         run: |
-          docker build -t estatefox-api:${{ needs.setup.outputs.environment }} .
+          docker build -t estatefox-api:build .
 
       - name: Save Docker image
-        if: needs.setup.outputs.is-preview == 'false'
         run: |
-          docker save estatefox-api:${{ needs.setup.outputs.environment }} | gzip > /tmp/estatefox-api.tar.gz
+          docker save estatefox-api:build | gzip > /tmp/estatefox-api.tar.gz
 
       - name: Upload Docker image
-        if: needs.setup.outputs.is-preview == 'false'
         uses: actions/upload-artifact@v4
         with:
           name: backend-image-${{ needs.setup.outputs.environment }}
@@ -237,7 +241,10 @@ jobs:
   deploy-backend-aws:
     name: Deploy Backend (AWS)
     needs: [setup, check-deployment-config, build-backend]
-    if: needs.check-deployment-config.outputs.use-aws == 'true' && needs.setup.outputs.is-preview == 'false'
+    # Explicit guard: production only runs for version tags
+    if: |
+      needs.check-deployment-config.outputs.use-aws == 'true' &&
+      (needs.setup.outputs.is-prod != 'true' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     environment:
       name: ${{ needs.setup.outputs.environment }}-api
@@ -261,20 +268,31 @@ jobs:
 
       - name: Push to ECR
         run: |
-          ENV="${{ needs.setup.outputs.environment }}"
+          VERSION="${{ needs.setup.outputs.version }}"
           ECR_REGISTRY="${{ secrets.ECR_REGISTRY }}"
 
           aws ecr get-login-password --region ${{ env.AWS_REGION }} | \
             docker login --username AWS --password-stdin $ECR_REGISTRY
 
-          # Tag with environment and commit SHA
-          docker tag estatefox-api:$ENV ${{ secrets.ECR_REPOSITORY }}:latest
-          docker tag estatefox-api:$ENV ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+          # Tag with version only (no 'latest' for clarity)
+          docker tag estatefox-api:build ${{ secrets.ECR_REPOSITORY }}:$VERSION
+          docker push ${{ secrets.ECR_REPOSITORY }}:$VERSION
 
-          docker push ${{ secrets.ECR_REPOSITORY }}:latest
-          docker push ${{ secrets.ECR_REPOSITORY }}:${{ github.sha }}
+          echo "Pushed image: ${{ secrets.ECR_REPOSITORY }}:$VERSION"
 
-          echo "Pushed images to ECR"
+      - name: Update Lambda function
+        run: |
+          VERSION="${{ needs.setup.outputs.version }}"
+          echo "Updating Lambda function: ${{ secrets.LAMBDA_FUNCTION_NAME }}"
+          aws lambda update-function-code \
+            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }} \
+            --image-uri ${{ secrets.ECR_REPOSITORY }}:$VERSION
+
+          echo "Waiting for Lambda update to complete..."
+          aws lambda wait function-updated \
+            --function-name ${{ secrets.LAMBDA_FUNCTION_NAME }}
+
+          echo "✅ Lambda function updated"
 
   # Deployment summary
   deployment-summary:
@@ -288,16 +306,24 @@ jobs:
           echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Environment:** ${{ needs.setup.outputs.environment }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.setup.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "**URL:** ${{ needs.setup.outputs.deploy-url }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           if [ "${{ needs.deploy-frontend-aws.result }}" == "success" ]; then
-            echo "Frontend deployed to AWS S3 + CloudFront" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Frontend deployed to AWS S3 + CloudFront" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.deploy-frontend-aws.result }}" == "skipped" ]; then
+            echo "⏭️ Frontend deployment skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Frontend deployment failed" >> $GITHUB_STEP_SUMMARY
           fi
 
           if [ "${{ needs.deploy-backend-aws.result }}" == "success" ]; then
-            echo "Backend pushed to ECR" >> $GITHUB_STEP_SUMMARY
+            echo "✅ Backend deployed to Lambda" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.deploy-backend-aws.result }}" == "skipped" ]; then
+            echo "⏭️ Backend deployment skipped" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Backend deployment failed" >> $GITHUB_STEP_SUMMARY
           fi
 
           echo "" >> $GITHUB_STEP_SUMMARY
